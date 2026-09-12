@@ -424,6 +424,52 @@ const app=$("#app");
 
 const ROOMS=["仲井真","糸満","新都心","沖尚前","富士学院","チャンプ","豊崎","真嘉比","小3学園"];
 
+/* ---------- 教科書採択地区（沖縄県・令和7年度） ---------- */
+const DISTRICTS={
+  kunigami:{name:"国頭地区",pub:"光村図書",tb:"Here We Go!"},
+  nakagami:{name:"中頭地区",pub:"光村図書",tb:"Here We Go!"},
+  naha:{name:"那覇地区",pub:"三省堂",tb:"NEW CROWN"},
+  shimajiri:{name:"島尻地区",pub:"開隆堂",tb:"SUNSHINE"},
+  miyako:{name:"宮古地区",pub:"開隆堂",tb:"SUNSHINE"},
+  yaeyama:{name:"八重山地区",pub:"開隆堂",tb:"SUNSHINE"},
+  taketomi:{name:"竹富地区",pub:"東京書籍",tb:"NEW HORIZON"}
+};
+const DKEYS=["naha","shimajiri","nakagami","kunigami","miyako","yaeyama","taketomi"];
+const CITY2D={
+  "名護":"kunigami","本部":"kunigami","金武":"kunigami","国頭":"kunigami","大宜味":"kunigami",
+  "東村":"kunigami","今帰仁":"kunigami","宜野座":"kunigami","伊江":"kunigami","伊平屋":"kunigami","伊是名":"kunigami",
+  "うるま":"nakagami","宜野湾":"nakagami","沖縄市":"nakagami","嘉手納":"nakagami","北谷":"nakagami",
+  "西原":"nakagami","読谷":"nakagami","北中城":"nakagami","中城":"nakagami","恩納":"nakagami",
+  "那覇":"naha","浦添":"naha","久米島":"naha","南大東":"naha","北大東":"naha",
+  "糸満":"shimajiri","豊見城":"shimajiri","南城":"shimajiri","八重瀬":"shimajiri","与那原":"shimajiri",
+  "南風原":"shimajiri","渡嘉敷":"shimajiri","座間味":"shimajiri","粟国":"shimajiri","渡名喜":"shimajiri",
+  "宮古島":"miyako","多良間":"miyako","石垣":"yaeyama","与那国":"yaeyama","竹富":"taketomi"
+};
+/* PAVLOVの教室から推測する既定の地区 */
+const ROOM2D={"仲井真":"naha","新都心":"naha","沖尚前":"naha","真嘉比":"naha","小3学園":"naha",
+  "糸満":"shimajiri","豊崎":"shimajiri","チャンプ":"naha","富士学院":"naha"};
+const normSchool=x=>String(x||"").trim().replace(/\s+/g,"")
+  .replace(/^沖縄県/,"").replace(/^(那覇|浦添|糸満|豊見城|南城|宜野湾|沖縄|うるま|名護|石垣|宮古島)市立/,"")
+  .replace(/[町村]立/,"").replace(/学校$/,"");
+function schoolBook(){ return (mem.meta&&mem.meta.schools)||{}; }
+function districtOf(s){
+  if(!s) return "";
+  if(s.dist&&DISTRICTS[s.dist]) return s.dist;
+  const key=normSchool(s.school);
+  const map=schoolBook();
+  if(key&&map[key]) return map[key];
+  const raw=String(s.school||"");
+  for(const c in CITY2D) if(raw.indexOf(c)>=0) return CITY2D[c];
+  return ROOM2D[s.room]||"";
+}
+function tbOf(s){ const d=districtOf(s); return d?DISTRICTS[d].tb:""; }
+/* その生徒に見せる教材：教科書教材はその地区のものだけ、英検など汎用教材は全員に見せる */
+function booksFor(s){
+  const tb=tbOf(s), all=books();
+  if(!tb) return all;
+  return all.filter(b=>!b.textbook || b.textbook===tb);
+}
+
 /* ---------- 記憶レベルの4段階判定 ---------- */
 const STATES=[
   {k:"done",l:"記憶済み",c:"var(--st-done)",ink:"var(--st-done-ink)",d:"安定して思い出せる"},
@@ -921,6 +967,12 @@ async function seedIfEmpty(){
 const MEKEY="pavlov-me-v1";
 function rememberMe(sid){ try{ sid?localStorage.setItem(MEKEY,sid):localStorage.removeItem(MEKEY); }catch(e){} }
 function rememberedId(){ try{ return localStorage.getItem(MEKEY)||""; }catch(e){ return ""; } }
+async function learnSchool(school,dist){
+  const k=normSchool(school); if(!k||!dist||!DISTRICTS[dist]) return;
+  const cur=Object.assign({},schoolBook());
+  if(cur[k]===dist) return;
+  cur[k]=dist; await Store.put("meta","schools",cur);
+}
 function newLoginId(){
   const used={}; Object.values(mem.students||{}).forEach(x=>{ if(x.loginId) used[String(x.loginId).toLowerCase()]=1; });
   for(let i=0;i<400;i++){ const id="pv"+String(Math.floor(1000+Math.random()*9000));
@@ -1576,7 +1628,7 @@ function viewLogin(){
 
 /* ---------- 生徒ホーム ---------- */
 function viewStudent(){
-  const s=state.student, bs=books(), now=Date.now();
+  const s=state.student, bs=booksFor(s), now=Date.now();
   const mine=assignments().filter(a=>!a.studentIds||!a.studentIds.length||a.studentIds.includes(s.id));
   let sum=0,tot=0,learned=0;
   bs.forEach(b=>{const r=bookMemory(s.id,b.id); sum+=r.m*r.total; tot+=r.total; learned+=r.learned;});
@@ -1590,6 +1642,11 @@ function viewStudent(){
         <p class="muted">記憶度は時間とともに下がります。下がった単語から出題されます。</p>
       </div>
     </div>
+    ${(function(){const d=districtOf(s); if(!d) return "";
+      const D=DISTRICTS[d];
+      return `<div class="card row gap10" style="padding:12px 14px">
+        <span class="pill acc">${esc(s.school?s.school:D.name)}</span>
+        <span class="tiny">教科書：<b>${esc(D.tb)}</b>（${esc(D.pub)}）・${esc(D.name)}</span></div>`;})()}
 
     ${mine.length?`<div class="stack gap10">
       <div class="eyebrow">今日の課題</div>
@@ -2694,6 +2751,13 @@ function studentDetail(sid){
       <div class="stack gap6"><div class="eyebrow">${esc(s.room||"")} ${esc(s.grade||"")}</div>
       <h2 style="font-size:21px">${esc(s.name)}</h2>
       <p class="muted">学習済み <span class="mono">${tot}</span> 語 / 定着 <span class="mono">${weak.filter(w=>w.m>=0.9).length}</span> 語</p></div></div>
+    <div class="card row gap10" style="padding:12px 14px">
+      ${(function(){const d=districtOf(s);
+        return d?`<span class="pill acc">${esc(s.school||DISTRICTS[d].name)}</span>
+          <span class="tiny">${esc(DISTRICTS[d].name)}・教科書 <b>${esc(DISTRICTS[d].tb)}</b>（${esc(DISTRICTS[d].pub)}）</span>`
+        :`<span class="tiny">中学校が未設定です。設定すると地区に合った教科書の単語だけが出ます。</span>`;})()}
+      <div class="spacer"></div>
+      <button class="btn sm" data-act="school-open" data-id="${sid}">学校を設定</button></div>
     <div class="card donutwrap">${donut(stateCounts(sid),210)}${stateLegend(stateCounts(sid),false)}</div>
     ${(function(){
       const iv=Object.values(mem.interviews||{}).filter(x=>x.sid===sid).sort((a,b)=>b.at-a.at).slice(0,6);
@@ -2874,6 +2938,17 @@ function tabSettings(){
     <div class="card stack gap10"><div class="eyebrow">サンプルデータ</div>
       <p class="muted">動作確認用の教材 ${demoB} 冊・生徒 ${demoS} 名が入っています。本番運用の前に削除してください。</p>
       <div><button class="btn danger sm" data-act="wipedemo">サンプルを削除</button></div></div>
+    <div class="card stack gap10"><div class="eyebrow">学校と教科書の対応</div>
+      <p class="muted">生徒に中学校を登録すると、ここに「学校 → 採択地区」が記録されます。地区が違っていたら削除して、生徒詳細の「学校を設定」でやり直してください。</p>
+      ${(function(){const m=schoolBook(), ks=Object.keys(m).sort();
+        if(!ks.length) return `<p class="empty">まだ登録がありません。</p>`;
+        return `<div class="card" style="padding:0">${ks.map(k=>`<div class="listrow">
+          <div class="grow"><b>${esc(k)}</b><span class="tiny">${esc(DISTRICTS[m[k]]?DISTRICTS[m[k]].name+"・"+DISTRICTS[m[k]].tb:"?")}</span></div>
+          <button class="btn sm ghost" data-act="school-del" data-id="${esc(k)}">削除</button></div>`).join("")}</div>`;})()}
+      <div class="card stack gap8" style="background:var(--surface2)">
+        <div class="eyebrow">沖縄県の採択地区（令和7年度）</div>
+        ${DKEYS.map(k=>`<div class="row"><span class="pill">${DISTRICTS[k].name}</span><span class="tiny">${DISTRICTS[k].pub}　<b>${DISTRICTS[k].tb}</b></span></div>`).join("")}
+      </div></div>
     <div class="card stack gap10"><div class="eyebrow">記憶度の考え方</div>
       <p class="muted">1問ごとに、その単語の「半減期」を更新します。正解すると半減期が伸び（＝忘れにくくなり）、不正解だと大きく縮みます。記憶度は最後に解いてからの経過時間で自動的に下がるので、放置した生徒はダッシュボード上で数値が落ちていきます。</p></div>
   </div>`;
@@ -2959,8 +3034,23 @@ function mdStudent(){ return `<div class="stack gap14">
   <div class="field"><label>氏名</label><input id="sn" placeholder="例）比嘉 陽菜"></div>
   <div class="field"><label>教室</label><select id="sr">${ROOMS.map(r=>`<option>${r}</option>`).join("")}</select></div>
   <div class="field"><label>学年</label><input id="sg" placeholder="例）中3"></div>
+  <div class="field"><label>中学校</label><input id="ss" placeholder="例）小禄中学校">
+    <p class="tiny">学校名を入れると、その地区の教科書の単語だけが生徒の画面に出ます。</p></div>
+  <div class="field"><label>教科書の地区</label>
+    <select id="sd"><option value="">学校名から自動で判定</option>
+    ${DKEYS.map(k=>`<option value="${k}">${DISTRICTS[k].name}（${DISTRICTS[k].pub} ${DISTRICTS[k].tb}）</option>`).join("")}</select></div>
   <div class="row"><div class="spacer"></div><button class="btn ghost" data-act="close">キャンセル</button>
     <button class="btn pri" data-act="student-save">追加</button></div></div>`; }
+
+function mdSchool(sid){ const s=mem.students[sid]||{}; const d=districtOf(s);
+  return `<div class="stack gap14"><h3>学校と教科書</h3>
+  <p class="muted">${esc(s.name||"")} さんの通う中学校を入れると、その地区の教科書の単語だけが出るようになります。</p>
+  <div class="field"><label>中学校</label><input id="es" value="${esc(s.school||"")}" placeholder="例）小禄中学校"></div>
+  <div class="field"><label>教科書の地区</label>
+    <select id="ed"><option value="">学校名から自動で判定${d?"（今："+DISTRICTS[d].name+"）":""}</option>
+    ${DKEYS.map(k=>`<option value="${k}" ${s.dist===k?"selected":""}>${DISTRICTS[k].name}（${DISTRICTS[k].pub} ${DISTRICTS[k].tb}）</option>`).join("")}</select></div>
+  <div class="row"><div class="spacer"></div><button class="btn ghost" data-act="close">キャンセル</button>
+    <button class="btn pri" data-act="school-save" data-id="${sid}">保存</button></div></div>`; }
 
 function mdTextbook(){
   const tb=state.tbBook||"NH", gr=state.tbGrade||"中2", make=state.tbMake||"both";
@@ -3362,9 +3452,30 @@ document.addEventListener("click",async e=>{
       const n=(($("#sn")||{}).value||"").trim();
       if(!n){toast("氏名を入力してください");break;}
       const li=newLoginId(), pw=newPin();
-      await Store.put("students",uid("st_"),{name:n,room:($("#sr")||{}).value||ROOMS[0],
-        grade:(($("#sg")||{}).value||"").trim(),loginId:li,pin:pw,createdAt:Date.now()});
-      closeModal(); toast("追加しました（ID "+li+" / パスコード "+pw+"）"); break;}
+      const sch=(($("#ss")||{}).value||"").trim(), dsel=($("#sd")||{}).value||"";
+      const rec={name:n,room:($("#sr")||{}).value||ROOMS[0],
+        grade:(($("#sg")||{}).value||"").trim(),school:sch,dist:dsel,
+        loginId:li,pin:pw,createdAt:Date.now()};
+      await Store.put("students",uid("st_"),rec);
+      await learnSchool(sch,dsel||districtOf(rec));
+      closeModal();
+      const dd=districtOf(rec);
+      toast("追加しました（ID "+li+" / パスコード "+pw+"）"+(dd?"　教科書："+DISTRICTS[dd].tb+"（"+DISTRICTS[dd].name+"）":""));
+      break;}
+    case "school-open": openModal(mdSchool(id)); break;
+    case "school-del":{
+      const m=Object.assign({},schoolBook()); delete m[id];
+      await Store.put("meta","schools",m); toast("削除しました"); render(); break;}
+    case "school-save":{
+      const st=mem.students[id]; if(!st){closeModal();break;}
+      const sch=(($("#es")||{}).value||"").trim(), dsel=($("#ed")||{}).value||"";
+      const rec=Object.assign({},st,{school:sch,dist:dsel});
+      await Store.put("students",id,rec);
+      await learnSchool(sch,dsel||districtOf(rec));
+      closeModal();
+      const dd2=districtOf(rec);
+      toast(dd2?(sch||"この生徒")+" → "+DISTRICTS[dd2].name+"・"+DISTRICTS[dd2].tb+" の単語が出ます":"保存しました");
+      render(); break;}
     case "accounts": openModal(mdAccounts()); break;
     case "repin":{
       const st=mem.students[id]; if(!st) break;
