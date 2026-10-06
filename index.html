@@ -546,7 +546,44 @@ const IC_MIC='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
 const VKEY="pavlov-voice-v1";
 const TTS={ok:false,on:true,rate:0.9,voice:null,warm:false};
 try{const v=JSON.parse(localStorage.getItem(VKEY)||"{}"); if(typeof v.on==="boolean")TTS.on=v.on; if(v.rate)TTS.rate=v.rate;}catch(e){}
-function saveVoice(){ try{localStorage.setItem(VKEY,JSON.stringify({on:TTS.on,rate:TTS.rate}));}catch(e){} }
+function saveVoice(){ try{localStorage.setItem(VKEY,JSON.stringify({on:TTS.on,rate:TTS.rate,sfx:SFX.on}));}catch(e){} }
+
+/* ---------- 効果音（正解のピンポン） ---------- */
+const SFX={on:true,ctx:null};
+try{const v=JSON.parse(localStorage.getItem(VKEY)||"{}"); if(typeof v.sfx==="boolean")SFX.on=v.sfx;}catch(e){}
+function sfxCtx(){
+  if(!SFX.ctx){ const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return null; SFX.ctx=new AC(); }
+  if(SFX.ctx.state==="suspended"){ try{SFX.ctx.resume();}catch(e){} }
+  return SFX.ctx;
+}
+/* ピン（高）→ ポン（低）の2音チャイム */
+function dingCorrect(force){
+  if(!SFX.on&&!force) return;
+  const ctx=sfxCtx(); if(!ctx) return;
+  const t0=ctx.currentTime;
+  const note=(freq,start,dur,vol)=>{
+    const o=ctx.createOscillator(), g=ctx.createGain(), o2=ctx.createOscillator(), g2=ctx.createGain();
+    o.type="sine"; o.frequency.value=freq;
+    o2.type="sine"; o2.frequency.value=freq*2.01; g2.gain.value=0.18;
+    g.gain.setValueAtTime(0.0001,t0+start);
+    g.gain.exponentialRampToValueAtTime(vol,t0+start+0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+start+dur);
+    o.connect(g); o2.connect(g2); g2.connect(g); g.connect(ctx.destination);
+    o.start(t0+start); o2.start(t0+start); o.stop(t0+start+dur+0.02); o2.stop(t0+start+dur+0.02);
+  };
+  note(1318.5,0,0.34,0.22);     // ピン（E6）
+  note(1046.5,0.17,0.46,0.20);  // ポン（C6）
+}
+function buzzWrong(force){
+  if(!SFX.on&&!force) return;
+  const ctx=sfxCtx(); if(!ctx) return;
+  const t0=ctx.currentTime;
+  const o=ctx.createOscillator(), g=ctx.createGain();
+  o.type="triangle"; o.frequency.setValueAtTime(190,t0); o.frequency.linearRampToValueAtTime(150,t0+0.26);
+  g.gain.setValueAtTime(0.0001,t0); g.gain.exponentialRampToValueAtTime(0.12,t0+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+0.3);
+  o.connect(g); g.connect(ctx.destination); o.start(t0); o.stop(t0+0.32);
+}
 function initTTS(){
   if(!("speechSynthesis" in window)) return;
   TTS.ok=true;
@@ -1979,6 +2016,7 @@ function answerQ(correct){
   if(correct){S.correct++;} else {S.wrong++;}
   S.queue.shift();
   if(!correct) S.queue.splice(Math.min(3,S.queue.length),0,iid);
+  if(correct) dingCorrect(); else buzzWrong();
   S.fb={correct,it:S.q.it,mode:S.q.mode,typed:S.typed||"",target:S.q.target||"",answerWords:S.q.answerWords||null};
   S.typed="";
   if(S.pending>=8){ Store.put("progress",k,p); S.pending=0; }
@@ -2916,6 +2954,12 @@ function tabSettings(){
         <div class="wraprow">${[["0.6","ゆっくり"],["0.9","ふつう"],["1.1","はやい"]].map(r=>
           `<button class="btn sm ${Math.abs(TTS.rate-parseFloat(r[0]))<0.05?"pri":""}" data-act="voice-rate" data-v="${r[0]}">${r[1]}</button>`).join("")}</div></div>
       <div class="divider"></div>
+      <div class="row"><div class="grow" style="flex:1"><b style="font-size:14.5px">正解音（ピンポン）</b>
+        <div class="tiny">正解すると「ピンポン」、まちがえると低い音が鳴ります。一斉テストのときはオフにしてください。</div></div>
+        <div class="wraprow">
+          <button class="btn sm" data-act="sfx-test">鳴らす</button>
+          <button class="btn sm ${SFX.on?"pri":""}" data-act="sfx-toggle">${SFX.on?"オン":"オフ"}</button></div></div>
+      <div class="divider"></div>
       <div class="row"><div class="grow" style="flex:1"><b style="font-size:14.5px">マイク</b>
         <div class="tiny">自動の文字起こしができない環境でも、録音して聞き比べる機能は使えます。</div></div>
         <button class="btn sm" data-act="micprobe">マイクを確認</button></div>
@@ -3184,6 +3228,8 @@ document.addEventListener("click",async e=>{
       break;}
     case "logout": stopSpeak(); stopListen(); stopMonitor(); state.view="login"; state.student=null; state.detail=null; state.session=null; render(); break;
     case "home": stopSpeak(); stopListen(); clearInterval(tvTimer); state.view="student"; state.session=null; state.tv=null; render(); break;
+    case "sfx-toggle": SFX.on=!SFX.on; saveVoice(); if(SFX.on) dingCorrect(true); render(); break;
+    case "sfx-test": dingCorrect(true); break;
     case "voice-toggle": TTS.on=!TTS.on; saveVoice(); if(TTS.on){warmTTS();speak("Hello");} else stopSpeak(); render(); break;
     case "voice-rate": TTS.rate=parseFloat(t.dataset.v); saveVoice(); warmTTS(); speak("This is a sample sentence.",TTS.rate); render(); break;
     case "tab": state.teacherTab=id; state.detail=null; render(); break;
