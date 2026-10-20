@@ -469,8 +469,11 @@ const normSchool=x=>String(x||"").trim().replace(/\s+/g,"")
   .replace(/^沖縄県/,"").replace(/^(那覇|浦添|糸満|豊見城|南城|宜野湾|沖縄|うるま|名護|石垣|宮古島)市立/,"")
   .replace(/[町村]立/,"").replace(/学校$/,"");
 function schoolBook(){ return (mem.meta&&mem.meta.schools)||{}; }
+/* 高校生・既卒、または「教科書の単語を出さない」にした生徒（私立中など）には地区の教科書を出さない */
+const noTB=s=>!!s&&(s.dist==="none"||/^(高|既卒)/.test(String(s.grade||"").trim()));
 function districtOf(s){
   if(!s) return "";
+  if(noTB(s)) return "";
   if(s.dist&&DISTRICTS[s.dist]) return s.dist;
   const key=normSchool(s.school);
   const map=schoolBook();
@@ -483,8 +486,14 @@ function tbOf(s){ const d=districtOf(s); return d?DISTRICTS[d].tb:""; }
 /* その生徒に見せる教材：教科書教材はその地区のものだけ、英検など汎用教材は全員に見せる */
 function booksFor(s){
   const tb=tbOf(s), all=books().filter(b=>!b.owner||b.owner===s.id);
-  if(!tb) return all;
-  return all.filter(b=>!b.textbook || b.textbook===tb);
+  const own=all.filter(b=>b.owner===s.id).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  const rest=all.filter(b=>!b.owner);
+  let pick;
+  if(Array.isArray(s.only)&&s.only.length) pick=rest.filter(b=>s.only.indexOf(b.id)>=0);
+  else if(noTB(s)) pick=rest.filter(b=>!b.textbook);
+  else if(!tb) pick=rest;
+  else pick=rest.filter(b=>!b.textbook || b.textbook===tb);
+  return own.concat(pick);
 }
 
 /* ---------- 記憶レベルの4段階判定 ---------- */
@@ -1683,7 +1692,9 @@ function viewLogin(){
 /* ---------- 生徒ホーム ---------- */
 function viewStudent(){
   const s=state.student, bs=booksFor(s), now=Date.now();
-  const mine=assignments().filter(a=>!a.studentIds||!a.studentIds.length||a.studentIds.includes(s.id));
+  const vis={}; bs.forEach(b=>vis[b.id]=1);
+  const named=x=>Array.isArray(x.studentIds)&&x.studentIds.indexOf(s.id)>=0;
+  const mine=assignments().filter(a=>named(a)||((!a.studentIds||!a.studentIds.length)&&vis[a.bookId]));
   let sum=0,tot=0,learned=0;
   bs.forEach(b=>{const r=bookMemory(s.id,b.id); sum+=r.m*r.total; tot+=r.total; learned+=r.learned;});
   const overall=tot?sum/tot:0;
@@ -1727,7 +1738,7 @@ function viewStudent(){
     </div>`:""}
 
     ${(function(){
-      const my=tests().filter(t=>testTargets(t).indexOf(s.id)>=0);
+      const my=tests().filter(t=>testTargets(t).indexOf(s.id)>=0&&(named(t)||vis[t.bookId]));
       const openLive=my.filter(t=>t.mode==="live"&&testState(t)==="live"&&!resultOf(t.id,s.id));
       const openAssign=my.filter(t=>t.mode==="assign"&&testState(t)==="live"&&!resultOf(t.id,s.id));
       const doneT=my.filter(t=>resultOf(t.id,s.id)).slice(0,3);
@@ -2817,9 +2828,17 @@ function studentDetail(sid){
       ${(function(){const d=districtOf(s);
         return d?`<span class="pill acc">${esc(s.school||DISTRICTS[d].name)}</span>
           <span class="tiny">${esc(DISTRICTS[d].name)}・教科書 <b>${esc(DISTRICTS[d].tb)}</b>（${esc(DISTRICTS[d].pub)}）</span>`
+        :noTB(s)?`<span class="pill">${esc(s.school||"")}</span><span class="tiny">高校生・私立のため、中学の教科書の単語は出しません。</span>`
         :`<span class="tiny">中学校が未設定です。設定すると地区に合った教科書の単語だけが出ます。</span>`;})()}
       <div class="spacer"></div>
       <button class="btn sm" data-act="school-open" data-id="${sid}">学校を設定</button></div>
+    <div class="card row gap10" style="padding:12px 14px;flex-wrap:wrap">
+      <span class="eyebrow">表示する教材</span>
+      ${(Array.isArray(s.only)&&s.only.length)
+        ?s.only.map(id=>getBook(id)).filter(Boolean).map(b=>`<span class="pill">${esc(b.title)}</span>`).join("")+`<span class="tiny">＋自分で撮った単語帳</span>`
+        :`<span class="tiny">おまかせ（学校・学年に合わせて自動）</span>`}
+      <div class="spacer"></div>
+      <button class="btn sm" data-act="only-open" data-id="${sid}">選ぶ</button></div>
     <div class="card donutwrap">${donut(stateCounts(sid),210)}${stateLegend(stateCounts(sid),false)}</div>
     ${(function(){
       const iv=Object.values(mem.interviews||{}).filter(x=>x.sid===sid).sort((a,b)=>b.at-a.at).slice(0,6);
@@ -3102,14 +3121,26 @@ function mdStudent(){ return `<div class="stack gap14">
   <h3>生徒を追加</h3>
   <div class="field"><label>氏名</label><input id="sn" placeholder="例）比嘉 陽菜"></div>
   <div class="field"><label>教室</label><select id="sr">${ROOMS.map(r=>`<option>${r}</option>`).join("")}</select></div>
-  <div class="field"><label>学年</label><input id="sg" placeholder="例）中3"></div>
-  <div class="field"><label>中学校</label><input id="ss" placeholder="例）小禄中学校">
-    <p class="tiny">学校名を入れると、その地区の教科書の単語だけが生徒の画面に出ます。</p></div>
+  <div class="field"><label>学年</label><input id="sg" placeholder="例）中3 / 高1"></div>
+  <div class="field"><label>学校</label><input id="ss" placeholder="例）小禄中学校">
+    <p class="tiny">中学校名を入れると、その地区の教科書の単語だけが生徒の画面に出ます。高校生（学年が「高」で始まる）には中学の教科書は出ません。</p></div>
   <div class="field"><label>教科書の地区</label>
     <select id="sd"><option value="">学校名から自動で判定</option>
+    <option value="none">教科書の単語を出さない（私立中・高校生）</option>
     ${DKEYS.map(k=>`<option value="${k}">${DISTRICTS[k].name}（${DISTRICTS[k].pub} ${DISTRICTS[k].tb}）</option>`).join("")}</select></div>
   <div class="row"><div class="spacer"></div><button class="btn ghost" data-act="close">キャンセル</button>
     <button class="btn pri" data-act="student-save">追加</button></div></div>`; }
+
+function mdOnly(sid){ const s=mem.students[sid]||{}; const on=Array.isArray(s.only)?s.only:[];
+  const bs=books().filter(b=>!b.owner);
+  return `<div class="stack gap14"><h3>表示する教材</h3>
+  <p class="muted">${esc(s.name||"")} さんの画面に出す教材を選んでください。何も選ばなければ「おまかせ」（学校・学年に合わせて自動）になります。<b>本人が写真で作った単語帳はいつも一番上に出ます。</b></p>
+  <div class="pickgrid" style="max-height:50vh;overflow:auto">${bs.map(b=>`<label class="pick" style="flex-direction:row;align-items:center;gap:8px;cursor:pointer">
+    <input type="checkbox" class="onlyb" value="${b.id}" ${on.indexOf(b.id)>=0?"checked":""} style="width:auto">
+    <span><b style="font-size:14px">${esc(b.title)}</b><br><span class="tiny">${b.items.length}語${b.textbook?" ・ "+esc(b.textbook):""}</span></span></label>`).join("")}</div>
+  <div class="row"><button class="btn ghost" data-act="only-clear" data-id="${sid}">おまかせに戻す</button><div class="spacer"></div>
+    <button class="btn ghost" data-act="close">キャンセル</button>
+    <button class="btn pri" data-act="only-save" data-id="${sid}">保存</button></div></div>`; }
 
 function mdSchool(sid){ const s=mem.students[sid]||{}; const d=districtOf(s);
   return `<div class="stack gap14"><h3>学校と教科書</h3>
@@ -3117,6 +3148,7 @@ function mdSchool(sid){ const s=mem.students[sid]||{}; const d=districtOf(s);
   <div class="field"><label>中学校</label><input id="es" value="${esc(s.school||"")}" placeholder="例）小禄中学校"></div>
   <div class="field"><label>教科書の地区</label>
     <select id="ed"><option value="">学校名から自動で判定${d?"（今："+DISTRICTS[d].name+"）":""}</option>
+    <option value="none" ${s.dist==="none"?"selected":""}>教科書の単語を出さない（私立中・高校生）</option>
     ${DKEYS.map(k=>`<option value="${k}" ${s.dist===k?"selected":""}>${DISTRICTS[k].name}（${DISTRICTS[k].pub} ${DISTRICTS[k].tb}）</option>`).join("")}</select></div>
   <div class="row"><div class="spacer"></div><button class="btn ghost" data-act="close">キャンセル</button>
     <button class="btn pri" data-act="school-save" data-id="${sid}">保存</button></div></div>`; }
@@ -3147,7 +3179,7 @@ function phSync(){ const P=state.ph; if(!P) return;
     const q=r.querySelector(".q"), a=r.querySelector(".a"); if(q) it.q=q.value; if(a) it.a=a.value; });
 }
 function phNewStudent(){ const s=state.student||{}, P=phNew(); P.role="student";
-  const tb=tbOf(s), T=TEXTBOOKS.find(x=>x.name===tb); P.tb=T?T.k:"OT"; P.grade=s.grade&&/^中[123]$/.test(s.grade)?s.grade:"中2"; return P; }
+  const tb=tbOf(s), T=TEXTBOOKS.find(x=>x.name===tb); P.tb=T?T.k:"OT"; P.grade=String(s.grade||"").trim()||"中2"; return P; }
 function phTitle(P){ const T=TEXTBOOKS.find(x=>x.k===P.tb)||TEXTBOOKS[0];
   if(P.role==="student"){ const d=new Date(); return ["写真",P.unit||"",(d.getMonth()+1)+"/"+d.getDate()].filter(Boolean).join(" "); }
   return [(T.k==="OT"?"":T.name), P.grade.replace("中","")+"年", P.unit||"", "写真"].filter(Boolean).join(" "); }
@@ -3195,9 +3227,9 @@ function mdPhoto(){
       style="${P.tb===x.k?"border-color:var(--accent);background:var(--accent-soft)":""}"><b>${x.name}</b><span>${x.pub||"指定なし"}</span></button>`).join("")}</div>
     <p class="tiny">教科書を選ぶと、その教科書を使う地区の生徒にだけ表示されます。</p></div>`}
   <div class="row">
-    <div class="field" style="flex:1"><label>学年</label>
-      <select id="phgrade">${GRADES.map(g=>`<option value="${g[0]}" ${P.grade===g[0]?"selected":""}>${g[1]}</option>`).join("")}</select></div>
-    <div class="field" style="flex:1"><label>${esc(T.unit)}（任意）</label><input id="phunit" value="${esc(P.unit)}" placeholder="例）${T.unit} 3"></div></div>
+    ${ST?"":`<div class="field" style="flex:1"><label>学年</label>
+      <select id="phgrade">${GRADES.map(g=>`<option value="${g[0]}" ${P.grade===g[0]?"selected":""}>${g[1]}</option>`).join("")}</select></div>`}
+    <div class="field" style="flex:1"><label>${ST?"単元・範囲":esc(T.unit)}（任意）</label><input id="phunit" value="${esc(P.unit)}" placeholder="例）${T.unit} 3"></div></div>
   ${P.busy?`<div class="phwait"><i></i>読み取り中… 20〜40秒ほどかかります</div>`:""}
   ${P.msg?`<div class="tiny">${P.msg}</div>`:""}
   <div class="row"><div class="spacer"></div><button class="btn ghost" data-act="close">キャンセル</button>
@@ -3678,6 +3710,10 @@ document.addEventListener("click",async e=>{
       toast("追加しました（ID "+li+" / パスコード "+pw+"）"+(dd?"　教科書："+DISTRICTS[dd].tb+"（"+DISTRICTS[dd].name+"）":""));
       break;}
     case "school-open": openModal(mdSchool(id)); break;
+    case "only-open": openModal(mdOnly(id)); break;
+    case "only-save": case "only-clear":{ const st=mem.students[id]; if(!st){closeModal();break;}
+      const ids=act==="only-clear"?[]:[...document.querySelectorAll(".onlyb:checked")].map(x=>x.value);
+      await Store.put("students",id,Object.assign({},st,{only:ids})); closeModal(); toast(ids.length?"表示する教材を保存しました":"おまかせに戻しました"); render(); break;}
     case "school-del":{
       const m=Object.assign({},schoolBook()); delete m[id];
       await Store.put("meta","schools",m); toast("削除しました"); render(); break;}
