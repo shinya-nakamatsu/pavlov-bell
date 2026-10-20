@@ -482,7 +482,7 @@ function districtOf(s){
 function tbOf(s){ const d=districtOf(s); return d?DISTRICTS[d].tb:""; }
 /* その生徒に見せる教材：教科書教材はその地区のものだけ、英検など汎用教材は全員に見せる */
 function booksFor(s){
-  const tb=tbOf(s), all=books();
+  const tb=tbOf(s), all=books().filter(b=>!b.owner||b.owner===s.id);
   if(!tb) return all;
   return all.filter(b=>!b.textbook || b.textbook===tb);
 }
@@ -1762,16 +1762,23 @@ function viewStudent(){
       <button class="btn pri big" data-act="iv-open">面接練習をはじめる</button>
     </div>`:""}
 
+    <div class="card row gap12" style="align-items:center">
+      <div style="font-size:30px;line-height:1">📷</div>
+      <div class="stack gap6" style="flex:1;min-width:0"><b style="font-size:15.5px">写真で単語帳を作る</b>
+        <span class="tiny">学校のプリントや教科書を撮ると、自分専用の単語帳ができます</span></div>
+      <button class="btn pri" data-act="photo-st">撮る</button></div>
+
     <div class="stack gap10">
       <div class="eyebrow">教材</div>
       <div class="card" style="padding:0">
         ${bs.length?bs.map(b=>{const r=bookMemory(s.id,b.id);
           return `<div class="listrow">${ring(r.m,"sm")}
             <div class="grow"><b>${esc(b.title)}</b>
-            <span class="tiny">${r.learned} / ${r.total} 語 定着</span>
+            <span class="tiny">${r.learned} / ${r.total} 語 定着${b.owner?" ・ 自分で作成":""}</span>
             <div style="margin-top:6px;max-width:220px">${lvSeg(b)}</div></div>
             <button class="btn sm ghost" data-act="prog" data-id="${b.id}">進捗</button>
-            <button class="btn sm" data-act="pickup" data-id="${b.id}">学習</button></div>`;}).join(""):
+            <button class="btn sm" data-act="pickup" data-id="${b.id}">学習</button>
+            ${b.owner===s.id?`<button class="btn sm ghost danger" data-act="mybook-del" data-id="${b.id}" aria-label="削除">✕</button>`:""}</div>`;}).join(""):
           `<p class="empty">教材がまだありません。</p>`}
       </div>
     </div>
@@ -2856,7 +2863,7 @@ function tabBooks(){
           if(Object.keys(p.items||{}).length){sum+=r.m;n++;}});
         return `<div class="listrow">${ring(n?sum/n:0,"sm")}
           <div class="grow"><b>${esc(b.title)}</b>
-            <span class="tiny">${b.items.length} ${b.kind==="sentence"?"文":"語"}${bookUnits(b).length?" ・ "+bookUnits(b).length+"単元":""} ・ 取り組み ${n} 名${b.demo?" ・ サンプル":""}</span>
+            <span class="tiny">${b.items.length} ${b.kind==="sentence"?"文":"語"}${bookUnits(b).length?" ・ "+bookUnits(b).length+"単元":""} ・ 取り組み ${n} 名${b.demo?" ・ サンプル":""}${b.owner?" ・ 生徒作成："+esc(b.ownerName||""):""}</span>
             <div style="margin-top:6px;max-width:280px">${lvSeg(b)}</div>
             <div class="wraprow" style="margin-top:6px">${LVKEYS.filter(k=>lvCount(b)[k]).map(k=>`<span class="lvchip"><i style="background:${lvColor(k)}"></i>${LVL[k]} ${lvCount(b)[k]}</span>`).join("")}</div></div>
           <button class="btn sm" data-act="booktest" data-id="${b.id}">テストを作る</button>
@@ -3139,7 +3146,10 @@ function phSync(){ const P=state.ph; if(!P) return;
   document.querySelectorAll(".phrow[data-i]").forEach(r=>{ const i=+r.dataset.i, it=P.items[i]; if(!it) return;
     const q=r.querySelector(".q"), a=r.querySelector(".a"); if(q) it.q=q.value; if(a) it.a=a.value; });
 }
+function phNewStudent(){ const s=state.student||{}, P=phNew(); P.role="student";
+  const tb=tbOf(s), T=TEXTBOOKS.find(x=>x.name===tb); P.tb=T?T.k:"OT"; P.grade=s.grade&&/^中[123]$/.test(s.grade)?s.grade:"中2"; return P; }
 function phTitle(P){ const T=TEXTBOOKS.find(x=>x.k===P.tb)||TEXTBOOKS[0];
+  if(P.role==="student"){ const d=new Date(); return ["写真",P.unit||"",(d.getMonth()+1)+"/"+d.getDate()].filter(Boolean).join(" "); }
   return [(T.k==="OT"?"":T.name), P.grade.replace("中","")+"年", P.unit||"", "写真"].filter(Boolean).join(" "); }
 function mdPhoto(){
   const P=state.ph||(state.ph=phNew());
@@ -3159,6 +3169,14 @@ function mdPhoto(){
     <div class="row"><button class="btn ghost" data-act="ph-back">← 撮り直す</button><div class="spacer"></div>
       <button class="btn pri" data-act="ph-save">保存する</button></div></div>`;
   }
+  if(P.step==="done"&&P.role==="student"){
+    return `<div class="stack gap14"><h3>単語帳ができました</h3>
+    <p class="muted"><b>${esc(P.savedTitle)}</b>（${P.savedN}語）を、あなた専用の教材に追加しました。</p>
+    <p class="tiny">ホームの「教材」にあります。先生も内容を見ることができます。</p>
+    <button class="btn pri big" style="width:100%" data-act="ph-study" data-id="${P.savedId}">このまま覚える</button>
+    <div class="row"><button class="btn ghost" data-act="ph-again">📷 続けて撮る</button><div class="spacer"></div>
+      <button class="btn ghost" data-act="close">閉じる</button></div></div>`;
+  }
   if(P.step==="done"){
     return `<div class="stack gap14"><h3>単語帳を作りました</h3>
     <p class="muted"><b>${esc(P.savedTitle)}</b>（${P.savedN}語）を教材に追加しました。</p>
@@ -3167,14 +3185,15 @@ function mdPhoto(){
     <div class="row"><button class="btn ghost" data-act="ph-again">📷 続けて撮る</button><div class="spacer"></div>
       <button class="btn ghost" data-act="close">閉じる</button></div></div>`;
   }
+  const ST=P.role==="student";
   return `<div class="stack gap14"><h3>📷 写真から単語帳を作る</h3>
-  <p class="muted">教科書の<b>単語欄</b>や<b>本文</b>、プリントを撮ってください。AIが英単語と意味を読み取ります（1回4枚まで）。</p>
+  <p class="muted">${ST?"学校のプリントや教科書の<b>単語ページ</b>・<b>本文</b>を撮ってください。AIが英単語と意味を読み取って、<b>あなた専用の単語帳</b>を作ります（1回4枚まで）。":"教科書の<b>単語欄</b>や<b>本文</b>、プリントを撮ってください。AIが英単語と意味を読み取ります（1回4枚まで）。"}</p>
   <div class="phthumbs">${P.imgs.map((m,i)=>`<div class="th" style="background-image:url(${m.url})"><button data-act="ph-delimg" data-i="${i}" aria-label="削除">✕</button></div>`).join("")}
     ${P.imgs.length<4?`<label class="phpick"><b>＋</b>${P.imgs.length?"追加":"撮影・選択"}<input id="phfile" type="file" accept="image/*" multiple></label>`:""}</div>
-  <div class="stack gap8"><div class="eyebrow">教科書</div>
+  ${ST?`<p class="tiny">${T.k==="OT"?"":"教科書："+esc(T.name)+" ／ "}ページ全体が明るく、まっすぐ写るように撮るときれいに読み取れます。</p>`:`<div class="stack gap8"><div class="eyebrow">教科書</div>
     <div class="pickgrid">${TEXTBOOKS.map(x=>`<button class="pick" data-act="ph-tb" data-k="${x.k}"
       style="${P.tb===x.k?"border-color:var(--accent);background:var(--accent-soft)":""}"><b>${x.name}</b><span>${x.pub||"指定なし"}</span></button>`).join("")}</div>
-    <p class="tiny">教科書を選ぶと、その教科書を使う地区の生徒にだけ表示されます。</p></div>
+    <p class="tiny">教科書を選ぶと、その教科書を使う地区の生徒にだけ表示されます。</p></div>`}
   <div class="row">
     <div class="field" style="flex:1"><label>学年</label>
       <select id="phgrade">${GRADES.map(g=>`<option value="${g[0]}" ${P.grade===g[0]?"selected":""}>${g[1]}</option>`).join("")}</select></div>
@@ -3187,6 +3206,8 @@ function mdPhoto(){
 function phErr(j,status){
   const e=j&&j.error;
   if(e==="bad_pin") return "講師パスコードが確認できませんでした。一度ログアウトして講師モードに入り直してください。";
+  if(e==="student_limit") return "今日はもう写真を使えません（1日"+(j.limit||"")+"枚まで）。明日また使えます。";
+  if(e==="bad_student") return "ログイン情報が確認できませんでした。一度ログアウトして、ログインし直してください。";
   if(e==="daily_limit") return "今日の読み取り回数の上限（"+(j.limit||"")+"枚）に達しました。明日また使えます。";
   if(e==="no_api_key") return "AIの設定（APIキー）がまだ済んでいません。管理者に連絡してください。";
   if(e==="too_large") return "写真が大きすぎます。枚数を減らしてください。";
@@ -3200,8 +3221,10 @@ async function phRun(){
   P.busy=true; P.msg=""; openModal(mdPhoto());
   try{
     const r=await fetch(AI_FN,{method:"POST",headers:{"Content-Type":"application/json",apikey:SB_KEY,Authorization:"Bearer "+SB_KEY},
-      body:JSON.stringify({ns:AI_NS,pin:state.tpin||((mem.meta.config&&mem.meta.config.pin)||""),grade:P.grade,
-        textbook:T.k==="OT"?"":T.name,max:40,images:P.imgs.map(m=>({media_type:m.media_type,data:m.data}))})});
+      body:JSON.stringify(Object.assign(P.role==="student"&&state.student
+        ?{role:"student",sid:state.student.id,spin:String(state.student.pin||"")}
+        :{pin:state.tpin||((mem.meta.config&&mem.meta.config.pin)||"")},{ns:AI_NS,grade:P.grade,
+        textbook:T.k==="OT"?"":T.name,max:40,images:P.imgs.map(m=>({media_type:m.media_type,data:m.data}))}))});
     let j=null; try{ j=await r.json(); }catch(_){}
     if(!r.ok){ P.msg=`<span class="ng">${phErr(j,r.status)}</span>`; return; }
     if(j.status==="no_english"||!(j.items||[]).length){ P.msg='<span class="ng">英語の単語を読み取れませんでした。ページ全体が明るく、まっすぐ写るように撮り直してください。</span>'; return; }
@@ -3221,7 +3244,8 @@ async function phSave(){
   if(!items.length){ toast("単語が1つもありません"); return; }
   const title=(P.title||phTitle(P)).trim(), id=uid("bk_");
   const book={title,tag:"英語",kind:"word",grade:P.grade,unit:P.unit||"",items,createdAt:Date.now(),ai:true,photo:true};
-  if(T.k!=="OT") book.textbook=T.name;
+  if(P.role==="student"&&state.student){ book.owner=state.student.id; book.ownerName=state.student.name||""; }
+  else if(T.k!=="OT") book.textbook=T.name;
   await Store.put("books",id,book);
   P.step="done"; P.savedId=id; P.savedTitle=title; P.savedN=items.length; P.imgs=[]; P.items=[];
   openModal(mdPhoto());
@@ -3400,6 +3424,10 @@ document.addEventListener("click",async e=>{
       V.rec={st:"idle",text:V.ans[V.idx]||""}; render(); break;}
     case "iv-again":{ const lv=state.iv.lv; ivOpen(); if(!state.busy){state.busy=true; await ivGenerate(lv); state.busy=false;} break;}
     case "photo": state.ph=phNew(); openModal(mdPhoto()); break;
+    case "photo-st": state.ph=phNewStudent(); openModal(mdPhoto()); break;
+    case "ph-study": modalHtml=null; startSession(id,20,"","std",""); break;
+    case "mybook-del":{ const b=getBook(id); if(!b||!state.student||b.owner!==state.student.id) break;
+      if(!confirm("「"+b.title+"」を削除しますか？")) break; await Store.del("books",id); render(); break; }
     case "ph-tb": phSync(); state.ph.tb=t.dataset.k; openModal(mdPhoto()); break;
     case "ph-delimg": phSync(); state.ph.imgs.splice(+t.dataset.i,1); openModal(mdPhoto()); break;
     case "ph-run": await phRun(); break;
@@ -3407,7 +3435,7 @@ document.addEventListener("click",async e=>{
     case "ph-addrow": phSync(); state.ph.items.push({q:"",a:"",ex:"",lv:""}); openModal(mdPhoto());
       setTimeout(()=>{ const r=document.querySelectorAll(".phrow .q"); const el=r[r.length-1]; if(el){ el.focus(); el.scrollIntoView({block:"nearest"}); } },30); break;
     case "ph-back": phSync(); state.ph.step="pick"; state.ph.msg=""; openModal(mdPhoto()); break;
-    case "ph-again": { const tb=state.ph.tb, gr=state.ph.grade; state.ph=phNew(); state.ph.tb=tb; state.ph.grade=gr; openModal(mdPhoto()); break; }
+    case "ph-again": { const role=state.ph.role, tb=state.ph.tb, gr=state.ph.grade; state.ph=role==="student"?phNewStudent():phNew(); state.ph.tb=tb; state.ph.grade=gr; openModal(mdPhoto()); break; }
     case "ph-save": await phSave(); break;
     case "textbook": if(!SAMPLE){toast("この環境ではAI作成が使えません");break;}
       state.tbBook=state.tbBook||"NH"; state.tbGrade=state.tbGrade||"中2"; state.tbMake=state.tbMake||"both";
