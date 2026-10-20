@@ -312,6 +312,22 @@ tbody tr:hover td{background:var(--surface2)}
 .modal{background:var(--surface);border:1px solid var(--line);border-radius:0;
   box-shadow:var(--shadow-lift);width:100%;max-width:560px;padding:20px}
 .modal h3{font-size:18px}
+.phthumbs{display:flex;gap:8px;flex-wrap:wrap}
+.phthumbs .th{position:relative;width:92px;height:118px;border:1px solid var(--line2);background:var(--surface2) center/cover no-repeat}
+.phthumbs .th button{position:absolute;top:2px;right:2px;width:26px;height:26px;border:0;background:rgba(0,0,0,.65);color:#fff;font-size:15px;line-height:26px;padding:0;cursor:pointer}
+.phpick{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;width:92px;height:118px;border:1.5px dashed var(--line2);color:var(--ink2);font-size:12px;font-weight:700;cursor:pointer;text-align:center}
+.phpick b{font-size:26px;line-height:1;color:var(--accent)}
+.phpick input{display:none}
+.phrows{max-height:52vh;overflow:auto;border:1px solid var(--line)}
+.phrow{display:grid;grid-template-columns:24px 1fr 1fr 34px;gap:6px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--line)}
+.phrow:last-child{border-bottom:0}
+.phrow .n{font-size:11px;color:var(--ink3);text-align:right}
+.phrow input{height:38px;padding:0 8px;font-size:16px;min-width:0}
+.phrow .q{font-family:var(--en)}
+.phrow .x{width:34px;height:34px;border:1px solid var(--line);background:var(--surface);color:var(--ink3);font-size:16px;cursor:pointer;padding:0}
+.phwait{display:flex;align-items:center;gap:10px;padding:14px;background:var(--accent-soft);font-size:14px;font-weight:700}
+.phwait i{width:16px;height:16px;border:2.5px solid var(--accent);border-right-color:transparent;border-radius:50%;animation:phspin .8s linear infinite}
+@keyframes phspin{to{transform:rotate(360deg)}}
 
 .ivcard{background:var(--surface);border:1px solid var(--line);border-radius:0;padding:18px}
 .ivpassage{font-family:var(--en);font-size:19px;line-height:1.75;letter-spacing:.005em}
@@ -2830,6 +2846,7 @@ function tabBooks(){
   const bs=books(), ss=students();
   return `<div class="stack gap14">
     <div class="row" style="flex-wrap:wrap"><h2 style="font-size:17px">教材</h2><div class="spacer"></div>
+      <button class="btn sm pri" data-act="photo">📷 写真から作る</button>
       <button class="btn sm" data-act="csv">CSVから作成</button>
       ${SAMPLE?`<button class="btn sm" data-act="ai">AIで作成</button>
         <button class="btn sm pri" data-act="textbook">教科書の本文から作る</button>`:`<span class="tiny">AI作成は次の段階で有効になります</span>`}</div>
@@ -3097,6 +3114,119 @@ function mdSchool(sid){ const s=mem.students[sid]||{}; const d=districtOf(s);
   <div class="row"><div class="spacer"></div><button class="btn ghost" data-act="close">キャンセル</button>
     <button class="btn pri" data-act="school-save" data-id="${sid}">保存</button></div></div>`; }
 
+/* ---------- 写真から単語帳を作る（Edge Function bell-ai 経由で Claude が読み取り） ---------- */
+const AI_FN=SB_URL+"/functions/v1/bell-ai", AI_NS="";
+function phNew(){ return {step:"pick",imgs:[],tb:state.ph&&state.ph.tb||"NC",grade:state.ph&&state.ph.grade||"中2",unit:"",title:"",items:[],msg:"",busy:false}; }
+function shrinkImage(file,maxSide){
+  return new Promise((ok,ng)=>{
+    const url=URL.createObjectURL(file), im=new Image();
+    im.onload=()=>{ try{
+      const k=Math.min(1,maxSide/Math.max(im.naturalWidth,im.naturalHeight));
+      const w=Math.round(im.naturalWidth*k), h=Math.round(im.naturalHeight*k);
+      const c=document.createElement("canvas"); c.width=w; c.height=h;
+      c.getContext("2d").drawImage(im,0,0,w,h);
+      const du=c.toDataURL("image/jpeg",0.86); URL.revokeObjectURL(url);
+      ok({url:du,media_type:"image/jpeg",data:du.split(",")[1]});
+    }catch(e){ng(e);} };
+    im.onerror=()=>{ URL.revokeObjectURL(url); ng(new Error("画像を開けませんでした（HEIC等は「互換性優先」で撮影してください）")); };
+    im.src=url;
+  });
+}
+function phSync(){ const P=state.ph; if(!P) return;
+  if($("#phunit")) P.unit=$("#phunit").value.trim();
+  if($("#phgrade")) P.grade=$("#phgrade").value;
+  if($("#phtitle")) P.title=$("#phtitle").value;
+  document.querySelectorAll(".phrow[data-i]").forEach(r=>{ const i=+r.dataset.i, it=P.items[i]; if(!it) return;
+    const q=r.querySelector(".q"), a=r.querySelector(".a"); if(q) it.q=q.value; if(a) it.a=a.value; });
+}
+function phTitle(P){ const T=TEXTBOOKS.find(x=>x.k===P.tb)||TEXTBOOKS[0];
+  return [(T.k==="OT"?"":T.name), P.grade.replace("中","")+"年", P.unit||"", "写真"].filter(Boolean).join(" "); }
+function mdPhoto(){
+  const P=state.ph||(state.ph=phNew());
+  const T=TEXTBOOKS.find(x=>x.k===P.tb)||TEXTBOOKS[0];
+  if(P.step==="review"){
+    const n=P.items.filter(x=>String(x.q).trim()&&String(x.a).trim()).length;
+    return `<div class="stack gap14"><h3>読み取り結果を確認</h3>
+    <p class="muted">AIが読み取った単語です。<b>まちがいは直接書き直し</b>、いらない行は ✕ で消してください。</p>
+    <div class="field"><label>教材の名前</label><input id="phtitle" value="${esc(P.title||phTitle(P))}"></div>
+    <div class="phrows">${P.items.map((x,i)=>`<div class="phrow" data-i="${i}"><span class="n">${i+1}</span>
+      <input class="q" value="${esc(x.q)}" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="英語">
+      <input class="a" value="${esc(x.a)}" aria-label="意味">
+      <button class="x" data-act="ph-delrow" data-i="${i}" aria-label="削除">✕</button></div>`).join("")||`<p class="empty">単語がありません</p>`}</div>
+    <div class="row"><button class="btn sm ghost" data-act="ph-addrow">＋ 行を追加</button><div class="spacer"></div>
+      <span class="tiny">${n}語</span></div>
+    ${P.msg?`<div class="tiny">${P.msg}</div>`:""}
+    <div class="row"><button class="btn ghost" data-act="ph-back">← 撮り直す</button><div class="spacer"></div>
+      <button class="btn pri" data-act="ph-save">保存する</button></div></div>`;
+  }
+  if(P.step==="done"){
+    return `<div class="stack gap14"><h3>単語帳を作りました</h3>
+    <p class="muted"><b>${esc(P.savedTitle)}</b>（${P.savedN}語）を教材に追加しました。</p>
+    <p class="tiny">${T.k==="OT"?"教科書の指定がないので、全生徒に表示されます。":`${esc(T.name)} を使う地区の生徒にだけ表示されます。`}</p>
+    <button class="btn pri" style="width:100%" data-act="booktest" data-id="${P.savedId}">このままテストを作る</button>
+    <div class="row"><button class="btn ghost" data-act="ph-again">📷 続けて撮る</button><div class="spacer"></div>
+      <button class="btn ghost" data-act="close">閉じる</button></div></div>`;
+  }
+  return `<div class="stack gap14"><h3>📷 写真から単語帳を作る</h3>
+  <p class="muted">教科書の<b>単語欄</b>や<b>本文</b>、プリントを撮ってください。AIが英単語と意味を読み取ります（1回4枚まで）。</p>
+  <div class="phthumbs">${P.imgs.map((m,i)=>`<div class="th" style="background-image:url(${m.url})"><button data-act="ph-delimg" data-i="${i}" aria-label="削除">✕</button></div>`).join("")}
+    ${P.imgs.length<4?`<label class="phpick"><b>＋</b>${P.imgs.length?"追加":"撮影・選択"}<input id="phfile" type="file" accept="image/*" multiple></label>`:""}</div>
+  <div class="stack gap8"><div class="eyebrow">教科書</div>
+    <div class="pickgrid">${TEXTBOOKS.map(x=>`<button class="pick" data-act="ph-tb" data-k="${x.k}"
+      style="${P.tb===x.k?"border-color:var(--accent);background:var(--accent-soft)":""}"><b>${x.name}</b><span>${x.pub||"指定なし"}</span></button>`).join("")}</div>
+    <p class="tiny">教科書を選ぶと、その教科書を使う地区の生徒にだけ表示されます。</p></div>
+  <div class="row">
+    <div class="field" style="flex:1"><label>学年</label>
+      <select id="phgrade">${GRADES.map(g=>`<option value="${g[0]}" ${P.grade===g[0]?"selected":""}>${g[1]}</option>`).join("")}</select></div>
+    <div class="field" style="flex:1"><label>${esc(T.unit)}（任意）</label><input id="phunit" value="${esc(P.unit)}" placeholder="例）${T.unit} 3"></div></div>
+  ${P.busy?`<div class="phwait"><i></i>読み取り中… 20〜40秒ほどかかります</div>`:""}
+  ${P.msg?`<div class="tiny">${P.msg}</div>`:""}
+  <div class="row"><div class="spacer"></div><button class="btn ghost" data-act="close">キャンセル</button>
+    <button class="btn pri" data-act="ph-run" ${P.imgs.length&&!P.busy?"":"disabled"}>読み取る</button></div></div>`;
+}
+function phErr(j,status){
+  const e=j&&j.error;
+  if(e==="bad_pin") return "講師パスコードが確認できませんでした。一度ログアウトして講師モードに入り直してください。";
+  if(e==="daily_limit") return "今日の読み取り回数の上限（"+(j.limit||"")+"枚）に達しました。明日また使えます。";
+  if(e==="no_api_key") return "AIの設定（APIキー）がまだ済んでいません。管理者に連絡してください。";
+  if(e==="too_large") return "写真が大きすぎます。枚数を減らしてください。";
+  if(e==="anthropic") return "AIの呼び出しに失敗しました（"+esc(String(j.status||""))+"）。少しおいて再度お試しください。";
+  if(status===404) return "AIの中継サーバーがまだ設置されていません。";
+  return "読み取りに失敗しました（"+esc(String(e||status||""))+"）。";
+}
+async function phRun(){
+  const P=state.ph; if(!P||P.busy||!P.imgs.length) return;
+  phSync(); const T=TEXTBOOKS.find(x=>x.k===P.tb)||TEXTBOOKS[0];
+  P.busy=true; P.msg=""; openModal(mdPhoto());
+  try{
+    const r=await fetch(AI_FN,{method:"POST",headers:{"Content-Type":"application/json",apikey:SB_KEY,Authorization:"Bearer "+SB_KEY},
+      body:JSON.stringify({ns:AI_NS,pin:state.tpin||((mem.meta.config&&mem.meta.config.pin)||""),grade:P.grade,
+        textbook:T.k==="OT"?"":T.name,max:40,images:P.imgs.map(m=>({media_type:m.media_type,data:m.data}))})});
+    let j=null; try{ j=await r.json(); }catch(_){}
+    if(!r.ok){ P.msg=`<span class="ng">${phErr(j,r.status)}</span>`; return; }
+    if(j.status==="no_english"||!(j.items||[]).length){ P.msg='<span class="ng">英語の単語を読み取れませんでした。ページ全体が明るく、まっすぐ写るように撮り直してください。</span>'; return; }
+    if(!P.unit&&j.unit_hint) P.unit=String(j.unit_hint).trim();
+    P.items=j.items.map(x=>({q:x.q,a:x.a,ex:x.ex||"",lv:normLv(x.lv)}));
+    P.title=""; P.step="review";
+  }catch(err){ P.msg=`<span class="ng">通信できませんでした。電波の良い場所で再度お試しください。</span>`; }
+  finally{ P.busy=false; if(state.ph===P&&modalHtml) openModal(mdPhoto()); }
+}
+async function phSave(){
+  const P=state.ph; if(!P) return; phSync();
+  const T=TEXTBOOKS.find(x=>x.k===P.tb)||TEXTBOOKS[0];
+  const seen={}, items=[];
+  P.items.forEach(x=>{ const q=String(x.q||"").trim(), a=String(x.a||"").trim(); if(!q||!a) return;
+    const k=q.toLowerCase(); if(seen[k]) return; seen[k]=1;
+    items.push({id:"p"+items.length+"_"+q.replace(/[^a-zA-Z0-9]/g,"").slice(0,14),q,a,ex:x.ex||"",lv:x.lv||guessLevel(q)||GRADE_LV[P.grade]||"4"}); });
+  if(!items.length){ toast("単語が1つもありません"); return; }
+  const title=(P.title||phTitle(P)).trim(), id=uid("bk_");
+  const book={title,tag:"英語",kind:"word",grade:P.grade,unit:P.unit||"",items,createdAt:Date.now(),ai:true,photo:true};
+  if(T.k!=="OT") book.textbook=T.name;
+  await Store.put("books",id,book);
+  P.step="done"; P.savedId=id; P.savedTitle=title; P.savedN=items.length; P.imgs=[]; P.items=[];
+  openModal(mdPhoto());
+}
+
 function mdTextbook(){
   const tb=state.tbBook||"NH", gr=state.tbGrade||"中2", make=state.tbMake||"both";
   const T=TEXTBOOKS.find(x=>x.k===tb)||TEXTBOOKS[0];
@@ -3224,7 +3354,7 @@ document.addEventListener("click",async e=>{
     case "login-teacher":{
       const pin=(mem.meta.config&&mem.meta.config.pin)||"1234";
       const v=($("#tpin")||{}).value||"";
-      if(v===pin){ state.view="teacher"; state.teacherTab="students"; state.detail=null; render(); }
+      if(v===pin){ state.tpin=v; state.view="teacher"; state.teacherTab="students"; state.detail=null; render(); }
       else toast("パスコードが違います");
       break;}
     case "logout": stopSpeak(); stopListen(); stopMonitor(); state.view="login"; state.student=null; state.detail=null; state.session=null; render(); break;
@@ -3269,6 +3399,16 @@ document.addEventListener("click",async e=>{
       V.ans[V.idx]=box?box.value.trim():""; V.idx=Math.max(0,V.idx-1);
       V.rec={st:"idle",text:V.ans[V.idx]||""}; render(); break;}
     case "iv-again":{ const lv=state.iv.lv; ivOpen(); if(!state.busy){state.busy=true; await ivGenerate(lv); state.busy=false;} break;}
+    case "photo": state.ph=phNew(); openModal(mdPhoto()); break;
+    case "ph-tb": phSync(); state.ph.tb=t.dataset.k; openModal(mdPhoto()); break;
+    case "ph-delimg": phSync(); state.ph.imgs.splice(+t.dataset.i,1); openModal(mdPhoto()); break;
+    case "ph-run": await phRun(); break;
+    case "ph-delrow": phSync(); state.ph.items.splice(+t.dataset.i,1); openModal(mdPhoto()); break;
+    case "ph-addrow": phSync(); state.ph.items.push({q:"",a:"",ex:"",lv:""}); openModal(mdPhoto());
+      setTimeout(()=>{ const r=document.querySelectorAll(".phrow .q"); const el=r[r.length-1]; if(el){ el.focus(); el.scrollIntoView({block:"nearest"}); } },30); break;
+    case "ph-back": phSync(); state.ph.step="pick"; state.ph.msg=""; openModal(mdPhoto()); break;
+    case "ph-again": { const tb=state.ph.tb, gr=state.ph.grade; state.ph=phNew(); state.ph.tb=tb; state.ph.grade=gr; openModal(mdPhoto()); break; }
+    case "ph-save": await phSave(); break;
     case "textbook": if(!SAMPLE){toast("この環境ではAI作成が使えません");break;}
       state.tbBook=state.tbBook||"NH"; state.tbGrade=state.tbGrade||"中2"; state.tbMake=state.tbMake||"both";
       openModal(mdTextbook()); break;
@@ -3574,6 +3714,13 @@ document.addEventListener("input",e=>{
   else set("var(--crit)",(k+1)+"文字目がちがいます","ng");
 });
 document.addEventListener("change",async e=>{
+  if(e.target&&e.target.id==="phfile"){
+    const P=state.ph; if(!P) return; phSync();
+    const files=[...(e.target.files||[])].slice(0,4-P.imgs.length);
+    P.msg="";
+    for(const f of files){ try{ P.imgs.push(await shrinkImage(f,1800)); }catch(err){ P.msg='<span class="ng">'+esc(err.message||err)+'</span>'; } }
+    openModal(mdPhoto()); return;
+  }
   if(e.target&&e.target.id==="tb"){ state.tBook=e.target.value; openModal(mdTest()); return; }
   const el=e.target.closest('[data-act="setlv"]'); if(!el) return;
   const bid=el.dataset.book, iid=el.dataset.item, b=mem.books&&mem.books[bid]; if(!b) return;
