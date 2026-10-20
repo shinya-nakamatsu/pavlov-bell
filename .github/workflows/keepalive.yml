@@ -1,0 +1,23 @@
+name: Supabase停止防止
+# Supabase無料プランは約1週間アクセスがないと一時停止し、アプリ全体が止まる。
+# 2日おきにDBへ読み書きして「使われている」状態を保つ。
+on:
+  schedule:
+    - cron: "17 21 */2 * *"   # 2日おき（日本時間 朝6:17ごろ）
+  workflow_dispatch:           # Actions画面から手動でも実行できる
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: DBにアクセス
+        run: |
+          URL="https://cvgakqwslrrpwqzyqelq.supabase.co/rest/v1/docs"
+          KEY="sb_publishable_KXFU7SJfJcjmG2BKDV542w_RRPjOPpD"
+          NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          curl -fsS --retry 3 --retry-delay 20 "$URL?select=id&limit=1" -H "apikey: $KEY" -H "Authorization: Bearer $KEY"
+          echo
+          curl -fsS --retry 3 --retry-delay 20 -X POST "$URL?on_conflict=coll,id" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates,return=minimal" \
+            -d "{\"coll\":\"sys\",\"id\":\"keepalive\",\"data\":{\"at\":\"$NOW\"},\"updated_at\":\"$NOW\"}"
+          echo "ok $NOW"
