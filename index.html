@@ -1954,11 +1954,16 @@ function nextQ(){
     q.opts=dis.concat([it]).sort(()=>Math.random()-0.5);
   }
   if(mode==="speak"){ S.rec={st:"idle",text:""}; }
-  if(mode==="order"){ q.letters=it.q.split("").map((ch,i)=>({ch,i})).sort(()=>Math.random()-0.5);
-    q.join=""; q.target=it.q; S.tiles=[]; }
+  if(mode==="order"){
+    const ws=String(it.q).trim().split(/\s+/);
+    if(ws.length>1){ q.letters=ws.map((ch,i)=>({ch,i})).sort(()=>Math.random()-0.5); q.join=" "; q.target=ws.join(" "); }
+    else { q.letters=it.q.split("").map((ch,i)=>({ch,i})).sort(()=>Math.random()-0.5); q.join=""; q.target=it.q; }
+    S.tiles=[]; }
   S.q=q;
 }
 
+const normAns=t=>String(t||"").normalize("NFKC").toLowerCase().replace(/[’‘`´]/g,"'")
+  .replace(/[〜~…]/g," ").replace(/\.{2,}/g," ").replace(/[.,!?;:"“”()（）、。！？]/g," ").replace(/\s+/g," ").trim();
 const normSent=t=>String(t||"").toLowerCase().replace(/[.,!?;:"'’“”]/g," ").replace(/\s+/g," ").trim();
 const words=t=>String(t||"").trim().split(/\s+/).filter(Boolean);
 // 配列どうしの差分（編集距離のバックトレース）
@@ -2030,9 +2035,19 @@ function diffBlock(typed,answer){
 }
 
 function clozeText(it){
-  const re=new RegExp("\\b"+it.q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\w*","i");
-  if(re.test(it.ex)) return esc(it.ex).replace(re,'<span class="blank"></span>');
-  return esc(it.ex)+' <span class="blank"></span>';
+  const core=String(it.q||"").trim().replace(/[~〜…]/g," ").replace(/[.!?。！？]+$/,"").trim();
+  if(!core) return "";
+  const ex=String(it.ex||"");
+  const escR=w=>w.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  // 語ごとに語尾の変化（looking, hurts など）を許す。先頭の be は am/is/are/was/were も許す
+  const parts=core.split(/\s+/).map((w,i)=>(i===0&&/^be$/i.test(w))?"(?:am|is|are|was|were|be|been|being)":escR(w)+"\\w*");
+  const re=new RegExp("\\b"+parts.join("\\s+"),"i");
+  if(re.test(ex)) return esc(ex).replace(re,'<span class="blank"></span>');
+  // 見つからないのに答えの語が例文に入っている → 答えが見えるので例文は出さない
+  const ansWords=normAns(core).split(" ").filter(w=>w.length>=3);
+  const exN=" "+normAns(ex)+" ";
+  if(ansWords.some(w=>exN.indexOf(" "+w)>=0)) return "";
+  return esc(ex)+' <span class="blank"></span>';
 }
 
 function answerQ(correct){
@@ -2225,13 +2240,13 @@ function viewStudy(){
     const picked=S.tiles||[];
     body=`<div class="qcard"><div class="qtype">${TYPE.order}</div>
       <div class="qjp">${esc(q.it.a)}</div>
-      <div class="slot">${picked.length?picked.map(t=>esc(t.ch)).join(""):`<span style="color:var(--ink3);font-size:15px;font-family:var(--jp)">下の文字をタップ</span>`}</div></div>
-      ${S.fb?"":`<div class="tiles">${q.letters.map((t,i)=>`<button class="tile ${picked.some(p=>p.i===t.i)?"used":""}" data-act="tile" data-i="${i}">${esc(t.ch)}</button>`).join("")}</div>
+      <div class="slot">${picked.length?picked.map(t=>esc(t.ch)).join(q.join||""):`<span style="color:var(--ink3);font-size:15px;font-family:var(--jp)">下の文字をタップ</span>`}</div></div>
+      ${S.fb?"":`<div class="tiles">${q.letters.map((t,i)=>`<button class="${q.join?"wtile":"tile"} ${picked.some(p=>p.i===t.i)?"used":""}" data-act="tile" data-i="${i}">${esc(t.ch)}</button>`).join("")}</div>
       <div class="row" style="justify-content:center;margin-top:12px"><button class="btn sm" data-act="undo">1つ戻す</button></div>`}`;
   }else{
     body=`<div class="qcard"><div class="qtype">${TYPE.spell}</div>
       <div class="qjp">${esc(q.it.a)}</div>
-      ${q.it.ex?`<div class="qex">${clozeText(q.it)}</div>`:""}</div>
+      ${q.it.ex&&clozeText(q.it)?`<div class="qex">${clozeText(q.it)}</div>`:""}</div>
       ${S.fb?"":`<div class="choices">
         <input id="spell" class="spellin" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="英語でつづりを入力">
         <button class="btn pri big" data-act="submitspell">答える</button></div>`}`;
@@ -2322,7 +2337,7 @@ function buildTest(t){
 function gradeQ(q,val,picked,tiles){
   if(q.f==="mc") return picked===q.it.id;
   if(q.f==="spell"||q.f==="listen")
-    return String(val||"").trim().toLowerCase().replace(/[.!?]$/,"")===String(q.it.q).toLowerCase();
+    return normAns(val)===normAns(q.it.q);
   if(q.f==="write") return normSent(val)===normSent(q.it.q);
   if(q.f==="cloze"){ const g=normSent(val).split(" ").filter(Boolean), w=(q.answerWords||[]).map(normSent);
     return g.length===w.length&&g.every((x,i)=>x===w[i]); }
@@ -3625,7 +3640,7 @@ document.addEventListener("click",async e=>{
       S.tiles.push(tl);
       if(S.tiles.length===(S.q.letters||[]).length){
         const made=S.tiles.map(x=>x.ch).join(S.q.join||"");
-        S.typed=made; answerQ(made===(S.q.target||S.q.it.q)); }
+        S.typed=made; answerQ(normAns(made)===normAns(S.q.target||S.q.it.q)); }
       else render();
       break;}
     case "undo":{ const S=state.session; if(S.tiles&&S.tiles.length){S.tiles.pop();render();} break;}
@@ -3639,7 +3654,7 @@ document.addEventListener("click",async e=>{
         const got=normSent(raw).split(" ").filter(Boolean);
         const want=S.q.answerWords.map(w=>normSent(w));
         answerQ(got.length===want.length&&got.every((g,i)=>g===want[i])); break; }
-      answerQ(raw.toLowerCase().replace(/[.!?]$/,"")===S.q.it.q.toLowerCase()); break;}
+      answerQ(normAns(raw)===normAns(S.q.it.q)); break;}
     case "next": nextQ(); render(); break;
 
     case "csv": openModal(mdCsv()); break;
@@ -3768,7 +3783,7 @@ document.addEventListener("click",async e=>{
 document.addEventListener("input",e=>{
   const el=e.target; if(!el||el.id!=="practice") return;
   const S=state.session; if(!S||!S.fb) return;
-  const t=String(S.fb.it.q||"").toLowerCase(), v=String(el.value||"").trim().toLowerCase();
+  const t=normAns(S.fb.it.q), v=normAns(el.value);
   const msg=document.getElementById("pmsg");
   const set=(color,text,cls)=>{ el.style.borderColor=color; if(msg){ msg.textContent=text; msg.className="tiny "+(cls||""); } };
   if(!v){ set("","",""); return; }
