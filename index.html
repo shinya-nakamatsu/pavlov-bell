@@ -1963,7 +1963,7 @@ function nextQ(){
 }
 
 const normAns=t=>String(t||"").normalize("NFKC").toLowerCase().replace(/[’‘`´]/g,"'")
-  .replace(/[〜~…]/g," ").replace(/\.{2,}/g," ").replace(/[.,!?;:"“”()（）、。！？]/g," ").replace(/\s+/g," ").trim();
+  .replace(/[〜~…∼˜〰]/g," ").replace(/\.{2,}/g," ").replace(/[.,!?;:"“”()（）、。！？]/g," ").replace(/\s+/g," ").trim();
 const normSent=t=>String(t||"").toLowerCase().replace(/[.,!?;:"'’“”]/g," ").replace(/\s+/g," ").trim();
 const words=t=>String(t||"").trim().split(/\s+/).filter(Boolean);
 // 配列どうしの差分（編集距離のバックトレース）
@@ -3842,7 +3842,36 @@ function startPolling(){
   },8000);
 }
 
+/* ---------- 自動更新：公開中の版（version.json）と違えば読み込み直す ---------- */
+const APP_VER="2026-10-29b";
+let verBusy=false;
+function verReload(v){
+  try{ if(sessionStorage.getItem("verTried")===v){ verBar(v); return; } sessionStorage.setItem("verTried",v); }catch(e){}
+  location.replace(location.pathname+"?v="+encodeURIComponent(v));
+}
+function verBar(v){
+  let b=document.getElementById("verbar"); if(b) return;
+  b=document.createElement("div"); b.id="verbar";
+  b.style.cssText="position:fixed;left:0;right:0;bottom:0;z-index:160;background:var(--accent);color:#fff;padding:14px 12px calc(14px + env(safe-area-inset-bottom));font:700 14px/1.4 var(--jp);text-align:center;cursor:pointer";
+  b.textContent="アプリが新しくなりました。ここをタップして更新してください";
+  b.onclick=()=>{ try{sessionStorage.removeItem("verTried");}catch(e){} location.replace(location.pathname+"?v="+encodeURIComponent(v)+"&r="+Date.now()); };
+  document.body.appendChild(b);
+}
+async function checkVersion(){
+  if(verBusy) return; verBusy=true;
+  try{
+    const r=await fetch("version.json?t="+Date.now(),{cache:"no-store"}); if(!r.ok) return;
+    const j=await r.json(); const v=j&&j.ver; if(!v||v===APP_VER) return;
+    const busy=state.view==="study"||state.view==="test"||!!modalHtml;
+    if(busy) verBar(v); else verReload(v);
+  }catch(e){} finally{ verBusy=false; }
+}
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") checkVersion(); });
+window.addEventListener("pageshow",e=>{ if(e.persisted) checkVersion(); });
+setInterval(checkVersion,3*60*1000);
+
 (async function boot(){
+  checkVersion();
   loadLocal();
   initTTS();
   document.addEventListener("pointerdown",warmTTS,{once:true});
