@@ -1807,12 +1807,12 @@ function viewProgress(){
   rows.forEach(r=>{ c[r.st]++; sum+=r.m; });
   c.total=rows.length; c.avg=rows.length?sum/rows.length:0;
   const f=state.pFilter||"", fl=state.pLv||"";
+  const us=bookUnits(b), pu2=state.pUnit||"";
   const order={weak:0,learn:1,unknown:2,done:3};
   const list=rows.filter(r=>(!f||r.st===f)&&(!fl||r.lv===fl)&&(!pu2||unitOf(r.it)===pu2))
     .sort((x,y)=>order[x.st]-order[y.st]||x.m-y.m);
   const cap=state.pMore||60, shown=list.slice(0,cap);
   const lvs=LEVELS.filter(L=>rows.some(r=>r.lv===L.k));
-  const us=bookUnits(b), pu2=state.pUnit||"";
   return `<div class="wrap stack gap20">
     <div class="row"><button class="btn ghost sm" data-act="home">← もどる</button>
       <div class="spacer"></div>
@@ -3843,7 +3843,7 @@ function startPolling(){
 }
 
 /* ---------- 自動更新：公開中の版（version.json）と違えば読み込み直す ---------- */
-const APP_VER="2026-10-29b";
+const APP_VER="2026-11-26a";
 let verBusy=false;
 function verReload(v){
   try{ if(sessionStorage.getItem("verTried")===v){ verBar(v); return; } sessionStorage.setItem("verTried",v); }catch(e){}
